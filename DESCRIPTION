@@ -1,0 +1,10 @@
+Package: rclahrc
+Title: HES data processing for the CLAHRC AAA programme, University of Sheffield
+Version: 0.1.0
+Authors@R: as.person("Tony Stone <tony.stone@sheffield.ac.uk> [aut,cre]")
+Description: The processing of HES data for use within the CLAHRC Avoiding Attendance and Admission (AAA) in Long Term Conditions research programme,
+undertaken by ScHARR, University of Sheffield.
+Depends: R (>= 3.3.3),
+         data.table (>= 1.10.4)
+License: GPL-3
+LazyData: true
