@@ -1,112 +1,7 @@
-createMeasureFilename <- function(m_name, geo_level = "lsoa") {
-  g_lev <- ifelse(geo_level == "lsoa", "lsoa", "site")
-  return(paste0("measures/", m_name, " measure - ", g_lev, " - ", format(Sys.time(), "%Y-%m-%d %H.%M"), ".Rda"))
-}
-
-
-
-fillDataPoints <- function(data, count_data = TRUE, lsoa_level = TRUE, crop = TRUE) {
-
-  # This function does not work for datasets with more than one measure (as they would, potentially, have different sub_measures)
-  #     so ensure we are only working with one measure
-  stopifnot(length(unique(data$measure)) == 1)
-
-  # Get catchment areas data
-  load("data/catchment area set final.Rda")
-
-  # Remove invalid time points from the data
-  data <- data[yearmonth >= as.Date("2007-04-01") & yearmonth <= as.Date("2014-03-01")]
-
-
-  if(lsoa_level == TRUE) {
-
-    # Create datapoints for each lsoa/month/measure/sub_measure covering the measurement space (as this is not guaranteed from the data)
-    data_points <- data.table::data.table(expand.grid(lsoa = unique(catchment_area_set_final$lsoa), yearmonth = seq(as.Date("2007-03-01"), as.Date("2014-03-01"), by = "month"), measure = unique(data$measure), sub_measure = unique(data$sub_measure), stringsAsFactors = FALSE))
-
-    # Merge data into data points so we have a record/row for each and every point
-    data_all_points <- merge(data_points, data, by = c("lsoa", "yearmonth", "measure", "sub_measure"), all.x = TRUE)
-
-    # if we do not have a value for a data point within the period for which we have data, set this to 0
-    # (else, if outside period for which we have data, it will remain as NA)
-    if(count_data == TRUE) {
-      data_all_points[is.na(value) & yearmonth >= min(data$yearmonth) & yearmonth <= max(data$yearmonth), value := 0]
-    }
-
-    # Merge in catchment area data
-    data_measure_all <- merge(data_all_points, catchment_area_set_final, by = "lsoa", all = TRUE, allow.cartesian = TRUE)
-
-    # Label intervention month "24" and each other month relative to that
-    data_measure_all[, relative_month := as.integer(lubridate::interval(intervention_date, yearmonth) %/% months(1)) + 25L]
-
-    # Prepare time_to_ed field/variable and finalise dataset
-    data_measure_all[, diff_time_to_ed := 0L]
-    data_measure_all[site_type == "intervention" & yearmonth >= intervention_date, diff_time_to_ed := diff_first_second]
-    data_measure_all[, c("diff_first_second", "intervention_date", "ae_post_intv") := NULL]
-
-  } else {
-
-    site_set <- unique(catchment_area_set_final[, .(town, group, intervention_date, site_type)])
-
-    # Create datapoints for each lsoa/month/measure/sub_measure covering the measurement space (as this is not guaranteed from the data)
-    data_points <- data.table::data.table(expand.grid(town = unique(site_set$town), yearmonth = seq(as.Date("2007-03-01"), as.Date("2014-03-01"), by = "month"), measure = unique(data$measure), sub_measure = unique(data$sub_measure), stringsAsFactors = FALSE))
-
-    # Merge data into data points so we have a record/row for each and every point
-    data_all_points <- merge(data_points, data, by = c("town", "yearmonth", "measure", "sub_measure"), all.x = TRUE)
-
-    # if we do not have a value for a data point within the period for which we have data, set this to 0
-    # (else, if outside period for which we have data, it will remain as NA)
-    if(count_data == TRUE) {
-      data_all_points[is.na(value) & yearmonth >= min(data$yearmonth) & yearmonth <= max(data$yearmonth), value := 0]
-    }
-
-    # Merge in catchment area data
-    data_measure_all <- merge(data_all_points, site_set, by = "town", all = TRUE, allow.cartesian = TRUE)
-
-    # Label intervention month "24" and each other month relative to that
-    data_measure_all[, relative_month := as.integer(lubridate::interval(intervention_date, yearmonth) %/% months(1)) + 25L]
-
-    # finalise dataset
-    data_measure_all[, intervention_date := NULL]
-  }
-
-  # Remove data outwith 2 years of intervention
-  if(crop == TRUE) {
-    data_measure_all <- data_measure_all[relative_month >= 1L & relative_month <= 48L]
-  }
-
-  return(data_measure_all)
-}
-
-
-
-addFractionSubmeasure <- function(data, subm_denom, subm_num, subm_new) {
-
-  if("lsoa" %in% colnames(data)) {
-    wide_data <- merge(data[sub_measure == subm_denom, .(lsoa, yearmonth, relative_month, measure, town, group, site_type, diff_time_to_ed, denominator = value)],
-      data[sub_measure == subm_num, .(lsoa, yearmonth, relative_month, measure, town, group, site_type, diff_time_to_ed, numerator = value)],
-      by = c("lsoa", "yearmonth", "measure", "town", "group", "site_type", "relative_month", "diff_time_to_ed"))
-  } else {
-    wide_data <- merge(data[sub_measure == subm_denom, .(yearmonth, relative_month, measure, town, group, site_type, denominator = value)],
-      data[sub_measure == subm_num, .(yearmonth, relative_month, measure, town, group, site_type, numerator = value)],
-      by = c("yearmonth", "measure", "town", "group", "site_type", "relative_month"))
-  }
-
-  wide_data[, ':=' (value = numerator / denominator,
-    sub_measure = subm_new,
-    numerator = NULL)]
-
-  # Only when denominator is 0 set value to 0 - do NOT change value from NA when denominator is NA.
-  wide_data[denominator == 0, value := 0]
-
-  # remove denominator field
-  wide_data[, denominator := NULL]
-
-  return(rbind(data, wide_data))
-}
-
-
-collapseLsoas2Sites <- function(data, remove_nas = FALSE) {
-  return(data[, .(value = sum(value, na.rm = remove_nas)), by = .(yearmonth, measure, sub_measure, town, group, site_type, relative_month)])
+createDataFilename <- function(m_name, quiet = TRUE) {
+  fn <- paste0("output-data/", m_name, " - ", format(Sys.time(), "%Y-%m-%d %H.%M"), ".Rds")
+  if(!quiet) print(fn)
+  return(fn)
 }
 
 
@@ -116,32 +11,7 @@ getOptimalCompress <- function(fname) {
 }
 
 
-getQuantileFromBins <- function(bin, n, prob = 0.5) {
-  return(quantile(rep(bin, n), prob, type = 8)[[1]])
-}
-
-getMeanFromBins <- function(bin, n) {
-  return(mean(rep(bin, n)))
-}
-
-
-attachTownForSiteLevelData <- function(data) {
-  # Get catchment areas data
-  load("data/catchment area set final.Rda")
-
-  # Merge in catchment area data
-  return(merge(data, catchment_area_set_final[, .(lsoa, town)], by = "lsoa", all.x = TRUE, allow.cartesian = TRUE))
-}
-
-attachAmbulanceService <- function(data) {
-  # Get catchment areas data
-  load("data/site data.Rda")
-
-  # Merge in catchment area data
-  return(merge(data, site_data[, .(town, ambulance_service)], by = "town", all.x = TRUE, allow.cartesian = TRUE))
-}
-
-classifyAvoidableDeaths <- function(data_in) {
+classifySECs <- function(data_in) {
 # need data with fields:
 #   startage - (integer)
 #   diag_01 - primary diagnosis (character)
@@ -225,7 +95,7 @@ classifyAvoidableDeaths <- function(data_in) {
 
 
 
-classifyAvoidableAdmissions <- function(data_in) {
+classifyUCCs <- function(data_in) {
   # need data with fields:
   #   startage - (integer)
   #   diag_01 - primary diagnosis (character)
