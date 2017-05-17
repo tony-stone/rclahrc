@@ -1,14 +1,14 @@
 connect2DB <- function() {
-  load(file = "data/DB settings read.rda")
+  load(file = "data/DB settings - clahrc, read.only.rda")
 
-  # Form the URL from the above set of params
-  db_url <- paste0("jdbc:postgresql://", db_config["host"], ":", db_config["port"], "/", db_config["db_name"], "?user=", db_config["user"], "&defaultAutoCommit")
+  # Form the URL from the above set of params; ssl=true means we connect over SSL/TLS; Java, by default, checks server TLS/SSL certificate is valid
+  db_url <- paste0("jdbc:postgresql://", db_config["host"], ":", db_config["port"], "/", db_config["db_name"], "?user=", db_config["user"])
 
-  # Specify the driver, the Java driver (JAR) file, and that Postgres uses double quotes (") to escape identifiers (keywords)
-  db_drvr <- RJDBC::JDBC("org.postgresql.Driver", "C:/Program Files/PostgreSQL/postgresql-9.4.1207.jar", "\"")
+  # Specify the driver, the Java driver (JAR) file, that Postgres uses double quotes (") to escape identifiers (keywords)
+  db_drvr <- RJDBC::JDBC("org.postgresql.Driver", "C:/Program Files/PostgreSQL/postgresql-42.1.1.jar", "\"")
 
   # Set up our DB connection
-  return(DBI::dbConnect(db_drvr, db_url, password = db_config["pass"]))
+  return(RJDBC::dbConnect(db_drvr, db_url, password = db_config["pass"]))
 }
 
 
@@ -62,94 +62,75 @@ getCounts <- function(db_conn, where = "1 = 1", src = "ae") {
 }
 
 
+getQueryResults <- function(table, fields, logic = NA, group.over = NA, limit = 500000) {
+  if(is.na(table) | length(table) != 1 | trimws(table) == "") stop("Must specify table in vector of length 1.")
+  if(any(is.na(fields)) | length(fields) < 1 | any(trimws(fields) == "")) stop("Must specify field(s) in vector form.")
+  if(!is.na(logic) & (length(logic) != 1 | trimws(logic) == "")) stop("If supplied, logic must be passed as a character vector of length 1.")
+  if(!is.na(group.over) & (length(group.over) < 1 | trimws(group.over) == "")) stop("If supplied, group.over field(s) must not be blank.")
 
+  fields <- paste0(fields, collapse = ", ")
+  temp.table.name <- paste0("temp_rs_", table)
 
-getDataFromTempTable <- function(conn, name, src = "ae", other_fields = "") {
-  # Much of this is a work around in order to get a large volume of data from PostgreSQL in (memory) manageable chunks
+  sql <- paste("CREATE TEMP TABLE", temp.table.name, "AS SELECT row_number() OVER () AS row,", fields, "FROM (SELECT", fields, "FROM", table)
+  if(!is.na(logic)) sql <- paste(sql, "WHERE", logic)
+  if(!is.na(group.over)) {
+    group.over <- paste0(group.over, collapse = ", ")
+    sql <- paste(sql, "GROUP BY", group.over)
+  }
+  sql <- paste0(sql, ") AS st;")
 
-  std_fields <- ifelse(src == "ae", "procode3, lsoa01, aedepttype, yearmonth, value", "procode, lsoa01, yearmonth, value")
-  other_fields <- ifelse(other_fields == "", "", paste0(", ", other_fields))
+  db_conn <- connect2DB()
 
-  # Get size of temp table
-  nrows <- DBI::dbGetQuery(conn, paste0("SELECT COUNT(*) FROM ", name, ";"))[1, 1]
+  # Fairly quick, depends on table indexing, etc.
+  resource <- RJDBC::dbSendUpdate(db_conn, sql)
 
-  # Set offset and limit var
-  offset <- 0L
-  limit <- 500000L
-  sql_select <- paste0("SELECT ", std_fields, other_fields, " FROM ", name)
+  # Insignificant
+  nrows <- DBI::dbGetQuery(db_conn, paste0("SELECT COUNT(*) FROM ", temp.table.name, ";"))[1, 1]
 
-  sql_query_select <- paste0(sql_select, " WHERE row > ", offset, " AND row <= ", offset + limit, ";")
-  df_data <- DBI::dbGetQuery(conn, sql_query_select)
+  offsets <- 0:(floor(nrows / limit) - as.integer(nrows %% limit == 0)) * limit
+  sql_queries <- paste("SELECT", fields, "FROM", temp.table.name, "WHERE row >", offsets, "AND row <=", offsets + limit, ";")
 
-  # Need to call gc() to clear up Java heap space
-  gc()
-
-  offset <- offset + limit
-
-  while (offset < nrows) {
-    sql_query_select <- paste0(sql_select, " WHERE row > ", offset, " AND row <= ", offset + limit, ";")
-    df_data <- rbind(df_data, DBI::dbGetQuery(conn, sql_query_select))
+  # Bet on 10s per iteration, max limit as much as possible
+  result_sets <- lapply(sql_queries, function(sql_query, conn) {
+    rs <- DBI::dbGetQuery(conn, sql_query)
     gc()
-    offset <- offset + limit
-  }
+    return(rs)
+  }, conn = db_conn)
 
-  # Convert to data.table
-  data <- data.table::data.table(df_data)
+  RJDBC::dbDisconnect(db_conn)
+  db_conn <- NULL
 
-  # Standardise field types
-  if(src == "ae") {
-    data[, yearmonth := as.Date(lubridate::fast_strptime(paste0(yearmonth, "-01"), format = "%Y-%m-%d", lt = FALSE))]
-  } else {
-    data[, yearmonth := as.Date(lubridate::fast_strptime(yearmonth, format = "%Y-%m-%d", lt = FALSE))]
-  }
-
-  # Standardise field names
-  data.table::setnames(data, "lsoa01", "lsoa")
-
-  return(data)
+  return(data.table::rbindlist(result_sets))
 }
 
 
+getAdHocQueryResults <- function(sql_query, limit = 500000) {
 
+  sql <- paste("CREATE TEMP TABLE temp_rs_adhoc AS SELECT row_number() OVER () AS row, st.* FROM (", sql_query, ") AS st;")
 
-getSqlUpdateQuery <- function(src = "ae", temp_tbl, select_logic = "", other_fields = "") {
+  db_conn <- connect2DB()
 
-  src_tbl <- getDBTableName(src)
+  # Fairly quick, depends on table indexing, etc.
+  resource <- RJDBC::dbSendUpdate(db_conn, sql)
 
-  if(src_tbl == "relevant_ae_attendances") {
-    std_fields <- "procode3, lsoa01, aedepttype, yearmonth, value"
-    std_fields_constr <- c("procode3, lsoa01, aedepttype, substring(arrivaldate from 1 for 7)", " AS yearmonth, COUNT(*) AS value")
-    sql_fields_units_std <- c(std_fields, paste0(std_fields_constr, collapse = ""), std_fields_constr[1])
+  # Insignificant
+  nrows <- DBI::dbGetQuery(db_conn, paste0("SELECT COUNT(*) FROM temp_rs_adhoc;"))[1, 1]
 
-    additional_fields <- ifelse(other_fields == "", "", paste0(", ", other_fields))
-    sql_fields_units <- paste0(sql_fields_units_std, additional_fields)
+  offsets <- 0:(floor(nrows / limit) - as.integer(nrows %% limit == 0)) * limit
+  sql_queries <- paste("SELECT * FROM temp_rs_adhoc WHERE row >", offsets, "AND row <=", offsets + limit, ";")
 
-    additional_logic <- ifelse(select_logic == "", "", paste0("AND ", select_logic))
+  # Bet on 10s per iteration, max limit as much as possible
+  result_sets <- lapply(sql_queries, function(sql_query, conn) {
+    rs <- DBI::dbGetQuery(conn, sql_query)
+    gc()
+    return(rs)
+  }, conn = db_conn)
 
-    # Prepare query string to create temp table
-    sql <- paste("CREATE TEMP TABLE", temp_tbl, "AS SELECT row_number() OVER () AS row,", sql_fields_units[1], "FROM (",
-      "SELECT", sql_fields_units[2], "FROM", src_tbl, "wHERE aeattendcat = '1'",
-      additional_logic,
-      "GROUP BY", sql_fields_units[3], ") AS st;")
+  RJDBC::dbDisconnect(db_conn)
+  db_conn <- NULL
 
-  } else {
+  data <- data.table::rbindlist(result_sets)
+  data[, row := NULL]
 
-    std_fields <- "procode, lsoa01, yearmonth, value"
-    std_fields_constr <- c("procode, lsoa01,  to_char(date_trunc('month', cips_start), 'YYYY-MM-DD')", " AS yearmonth, COUNT(*) AS value")
-    sql_fields_units_std <- c(std_fields, paste0(std_fields_constr, collapse = ""), std_fields_constr[1])
-
-    additional_fields <- ifelse(other_fields == "", "", paste0(", ", other_fields))
-    sql_fields_units <- paste0(sql_fields_units_std, additional_fields)
-
-    additional_logic <- ifelse(select_logic == "", "", paste0("AND ", select_logic))
-
-    # Prepare query string to create temp table
-    sql <- paste("CREATE TEMP TABLE", temp_tbl, "AS SELECT row_number() OVER () AS row,", sql_fields_units[1], "FROM (",
-      "SELECT", sql_fields_units[2], "FROM", src_tbl,
-      "WHERE emergency_admission = TRUE",
-      additional_logic,
-      "GROUP BY", sql_fields_units[3], ") AS st;")
-  }
-
-  return(sql)
+  return(data)
 }

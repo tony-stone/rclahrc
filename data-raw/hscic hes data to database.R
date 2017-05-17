@@ -22,14 +22,14 @@ db_conn <- RJDBC::dbConnect(db_drvr, db_url, password = db_config["pass"])
 # Have a look at data
 #test1 <- data.table::fread("data-raw/hscic/extract_sheffield_ae_1112.txt", sep = "|", header = TRUE, na.strings = "", colClasses = "character", nrows = 10L)
 
-ae_tbl_name <- "hes_ae_1114_raw"
+tbl_name <- "hes_ae_1114_raw"
 
 #NOTE:
 # invest2_nn is dirty (>2 chars)
 # "aekey" is actually 12 characters (not 8 as specified), it is unique across reporting years (suspect first four chars are some play on the reporting year).
 
 # Create AE table
-sql_create_AE_table <- paste0("CREATE TABLE public.", ae_tbl_name, " (",
+sql_create_AE_table <- paste0("CREATE TABLE public.", tbl_name, " (",
                               paste0(c("activage VARCHAR(3)",
                                      "arrivalage VARCHAR(4)",
                                      "carersi CHAR(2)",
@@ -112,11 +112,11 @@ sql_create_AE_table <- paste0("CREATE TABLE public.", ae_tbl_name, " (",
                                      "epikey VARCHAR(12)"), collapse = ", "), ");")
 
 # Ensure table does not already exist
-stopifnot(RJDBC::dbExistsTable(db_conn, ae_tbl_name) == FALSE)
+stopifnot(RJDBC::dbExistsTable(db_conn, tbl_name) == FALSE)
 
 # Delete table?
-if(RJDBC::dbExistsTable(db_conn, ae_tbl_name) == TRUE) {
-  tryCatch(invisible(RJDBC::dbRemoveTable(db_conn, ae_tbl_name)), error = function(e) { stop(paste0("Could not remove DB table: ", ae_tbl_name)) }, finally = NULL)
+if(RJDBC::dbExistsTable(db_conn, tbl_name) == TRUE) {
+  tryCatch(invisible(RJDBC::dbRemoveTable(db_conn, tbl_name)), error = function(e) { stop(paste0("Could not remove DB table: ", tbl_name)) }, finally = NULL)
 }
 
 # Attempt to create table
@@ -130,7 +130,7 @@ stopifnot(AE_table_created == TRUE)
 # Upload data to table (returns FALSE for statements which failed to execute; TRUE for those that did)
 file.paths <- paste0(getwd(), "/data-raw/hscic/", c(paste0("AE_", 11:13, 12:14, ".TXT"), "extract_sheffield_ae_1112.txt"))
 
-sql_upload_data <- paste0("COPY public.", ae_tbl_name, " FROM '", file.paths, "' (FORMAT CSV, DELIMITER '|', HEADER TRUE, NULL '')")
+sql_upload_data <- paste0("COPY public.", tbl_name, " FROM '", file.paths, "' (FORMAT CSV, DELIMITER '|', HEADER TRUE, NULL '')")
 
 # ~ 3mins
 data_uploaded <- sapply(sql_upload_data, function(sql_st) {
@@ -146,107 +146,178 @@ stopifnot(all(data_uploaded == "OK"))
 
 # Add unique constraint on "aekey" field, ~ 30s
 AE_aekey_unique <- tryCatch({
-  RJDBC::dbSendUpdate(db_conn, paste0("ALTER TABLE public.", ae_tbl_name, " ADD UNIQUE (aekey);"))
+  RJDBC::dbSendUpdate(db_conn, paste0("ALTER TABLE public.", tbl_name, " ADD UNIQUE (aekey);"))
   TRUE
 }, error = function(e)
   return(FALSE))
 stopifnot(AE_aekey_unique == TRUE)
 
 # Total rows in table
-row_cont <- unlist(RJDBC::dbGetQuery(db_conn, paste0("SELECT COUNT(*) FROM public.", ae_tbl_name)))
+row_cont <- unlist(RJDBC::dbGetQuery(db_conn, paste0("SELECT COUNT(*) FROM public.", tbl_name)))
 stopifnot(row_cont == 5038568)
 
 
 # Upload APC data ---------------------------------------------------------
 
 # Have a look at data
-#test2 <- data.table::fread("D:/Rpackages/rclosed/data-raw/HSCIC HES data/Extract_Sheffield_APC_1112.txt", sep = "|", header = TRUE, na.strings = "", colClasses = "character", nrows = 10L)
+#test2 <- data.table::fread("data-raw/hscic/extract_sheffield_apc_1112.txt", sep = "|", header = TRUE, na.strings = "", colClasses = "character", nrows = 10L)
 
 #NOTE:
 # "epikey" is actually 12 characters (not 8 as specified), it is unique across reporting years (suspect first four chars are some play on the reporting year).
 # "ethnos" from 2013/14 has max length of 2 chars (rather than 1)
-#  For Year 2011/12, HSCIC included two extra fields (admi_cfl and dis_cfl, check flags for admidate and disdate)
+# "posopdur" up to 4chars
+
+tbl_name <- "hes_apc_1114_raw"
 
 # Create APC table
-sql_create_APC_table <- paste0("CREATE TABLE public.hes_apc_0714_raw (",
-  "endage VARCHAR(4), startage VARCHAR(4), ethnos VARCHAR(2), ",
-  "encrypted_hesid VARCHAR(32), postdist VARCHAR(4), sex CHAR(1), ",
-  "admidate VARCHAR(10), admimeth VARCHAR(2), admisorc VARCHAR(2), ",
-  "disdate VARCHAR(10), disdest VARCHAR(2), dismeth CHAR(1), ",
-  "spelbgin CHAR(1), epiend VARCHAR(10), epistart VARCHAR(10), ",
-  "speldur VARCHAR(5), spelend CHAR(1), epidur VARCHAR(5), ",
-  "epiorder VARCHAR(2), disreadydate VARCHAR(10), diag_01 VARCHAR(6), ",
-  "diag_02 VARCHAR(6), diag_03 VARCHAR(6), diag_04 VARCHAR(6), diag_05 VARCHAR(6), ",
-  "diag_06 VARCHAR(6), diag_07 VARCHAR(6), diag_08 VARCHAR(6), diag_09 VARCHAR(6), ",
-  "diag_10 VARCHAR(6), diag_11 VARCHAR(6), diag_12 VARCHAR(6), diag_13 VARCHAR(6), ",
-  "diag_14 VARCHAR(6), diag_15 VARCHAR(6), diag_16 VARCHAR(6), diag_17 VARCHAR(6), ",
-  "diag_18 VARCHAR(6), diag_19 VARCHAR(6), diag_20 VARCHAR(6), diag3_01 VARCHAR(3), ",
-  "diag4_01 VARCHAR(4), cause VARCHAR(6), cause4 VARCHAR(4), cause3 VARCHAR(3), ",
-  "intmanig CHAR(1), mainspef VARCHAR(3), tretspef VARCHAR(3), ",
-  "procode VARCHAR(5), procode3 VARCHAR(3), procodet VARCHAR(5), ",
-  "oacode6 VARCHAR(6), resladst VARCHAR(4), respct06 VARCHAR(3), LSOA01 VARCHAR(9), ",
-  "MSOA01 VARCHAR(9), rururb_ind CHAR(1), imd04rk VARCHAR(5), ",
-  "epikey VARCHAR(12));")
+sql_create_APC_table <- paste0("CREATE TABLE public.", tbl_name, " (",
+                              paste0(c("endage VARCHAR(4)",
+                                       "startage VARCHAR(4)",
+                                       "mydob CHAR(6)",
+                                       "ethnos VARCHAR(2)",
+                                       "encrypted_hesid VARCHAR(32)",
+                                       "postdist VARCHAR(4)",
+                                       "sex CHAR(1)",
+                                       "admidate CHAR(10)",
+                                       "adm_cfl CHAR(1)",
+                                       "elecdate VARCHAR(10)",
+                                       "elec_cfl CHAR(1)",
+                                       "admimeth VARCHAR(2)",
+                                       "admisorc VARCHAR(2)",
+                                       "firstreg CHAR(1)",
+                                       "elecdur VARCHAR(4)",
+                                       "disdate CHAR(10)",
+                                       "dis_cfl CHAR(1)",
+                                       "disdest VARCHAR(2)",
+                                       "dismeth CHAR(1)",
+                                       "bedyear VARCHAR(3)",
+                                       "spelbgin CHAR(1)",
+                                       "epiend CHAR(10)",
+                                       "epistart CHAR(10)",
+                                       "speldur VARCHAR(5)",
+                                       "spelend CHAR(1)",
+                                       "epidur VARCHAR(5)",
+                                       "epiorder VARCHAR(2)",
+                                       "epie_cfl CHAR(1)",
+                                       "epis_cfl CHAR(1)",
+                                       "epistat CHAR(1)",
+                                       "epitype CHAR(1)",
+                                       "PROVSPNOPS CHAR(20)",
+                                       "wardstrt VARCHAR(7)",
+                                       "disreadydate CHAR(10)",
+                                       paste0("diag_", c(paste0(0, 1:9), 10:20), " VARCHAR(6)"),
+                                       "diag3_01 VARCHAR(3)",
+                                       "diag4_01 VARCHAR(4)",
+                                       "cause VARCHAR(6)",
+                                       "cause4 VARCHAR(4)",
+                                       "cause3 VARCHAR(3)",
+                                       paste0("opertn_", c(paste0(0, 1:9), 10:24), " VARCHAR(5)"),
+                                       "opertn3_01 VARCHAR(3)",
+                                       paste0("opdate_", c(paste0(0, 1:9), 10:24), " CHAR(10)"),
+                                       "operstat CHAR(1)",
+                                       "posopdur VARCHAR(4)",
+                                       "preopdur VARCHAR(3)",
+                                       "classpat CHAR(1)",
+                                       "intmanig CHAR(1)",
+                                       "mainspef VARCHAR(3)",
+                                       "tretspef VARCHAR(3)",
+                                       "domproc VARCHAR(4)",
+                                       "HRGLATE35 VARCHAR(3)",
+                                       "hrgnhs VARCHAR(3)",
+                                       "hrgnhsvn VARCHAR(3)",
+                                       "suscorehrg VARCHAR(5)",
+                                       "sushrg VARCHAR(5)",
+                                       "sushrgvers VARCHAR(3)",
+                                       "susspellid VARCHAR(10)",
+                                       "purcode VARCHAR(5)",
+                                       "purval CHAR(1)",
+                                       "purstha VARCHAR(3)",
+                                       "gppracha VARCHAR(3)",
+                                       "pcgcode VARCHAR(5)",
+                                       "pctcode06 VARCHAR(5)",
+                                       "gpprpct VARCHAR(5)",
+                                       "procode VARCHAR(5)",
+                                       "procode3 VARCHAR(3)",
+                                       "procodet VARCHAR(5)",
+                                       "sitetret VARCHAR(5)",
+                                       "protype VARCHAR(10)",
+                                       "gpprstha VARCHAR(3)",
+                                       "rescty VARCHAR(2)",
+                                       "resladst VARCHAR(4)",
+                                       "resladst_currward VARCHAR(6)",
+                                       "ward91 VARCHAR(6)",
+                                       "resha VARCHAR(3)",
+                                       "hatreat VARCHAR(3)",
+                                       "pctnhs VARCHAR(5)",
+                                       "respct06 VARCHAR(5)",
+                                       "resstha06 VARCHAR(3)",
+                                       "pcttreat VARCHAR(3)",
+                                       "rotreat VARCHAR(3)",
+                                       "sthatreat VARCHAR(3)",
+                                       "lsoa01 VARCHAR(9)",
+                                       "msoa01 VARCHAR(9)",
+                                       "rururb_ind CHAR(1)",
+                                       "imd04c VARCHAR(5)",
+                                       "imd04ed VARCHAR(5)",
+                                       "imd04em VARCHAR(5)",
+                                       "imd04hd VARCHAR(5)",
+                                       "imd04hs VARCHAR(5)",
+                                       "imd04i VARCHAR(4)",
+                                       "imd04ia VARCHAR(4)",
+                                       "imd04ic VARCHAR(4)",
+                                       "imd04le VARCHAR(5)",
+                                       "imd04 VARCHAR(5)",
+                                       "imd04rk VARCHAR(5)",
+                                       "imd04_decile VARCHAR(20)",
+                                       "carersi CHAR(2)",
+                                       "mentcat CHAR(1)",
+                                       "admistat CHAR(1)",
+                                       "epikey CHAR(12)",
+                                       "aekey CHAR(12)"), collapse = ", "), ");")
 
 # Ensure table does not already exist
-stopifnot(RJDBC::dbExistsTable(db_conn, "hes_apc_0714_raw") == FALSE)
+stopifnot(RJDBC::dbExistsTable(db_conn, tbl_name) == FALSE)
+
+# Delete table?
+if(RJDBC::dbExistsTable(db_conn, tbl_name) == TRUE) {
+  tryCatch(invisible(RJDBC::dbRemoveTable(db_conn, tbl_name)), error = function(e) { stop(paste0("Could not remove DB table: ", tbl_name)) }, finally = NULL)
+}
 
 # Attempt to create table
 APC_table_created <- tryCatch({
   RJDBC::dbSendUpdate(db_conn, sql_create_APC_table)
   TRUE
-  }, error = function(e)
-    return(FALSE))
+}, error = function(e)
+  return(FALSE))
 stopifnot(APC_table_created == TRUE)
 
-# Upload data to table (returns error msgs for statements which fail to execute; "OK" for those that do execute successfully)
-yrs <- c(paste0("0", 7:9), 10:14)
-sql_upload_data <- paste0("COPY public.hes_apc_0714_raw FROM '", getwd(), "/data-raw/HSCIC HES data/Extract_Sheffield_APC_", yrs[1:7], yrs[2:8], ".txt' (FORMAT CSV, DELIMITER '|', HEADER TRUE)")
-data_uploaded <- lapply(sql_upload_data, function(sql_st) {
+# Upload data to table (returns FALSE for statements which failed to execute; TRUE for those that did)
+file.paths <- paste0(getwd(), "/data-raw/hscic/", c(paste0("APC_", 11:13, 12:14, ".TXT"), "extract_sheffield_apc_1112.txt"))
+
+sql_upload_data <- paste0("COPY public.", tbl_name, " FROM '", file.paths, "' (FORMAT CSV, DELIMITER '|', HEADER TRUE, NULL '')")
+
+# ~ 3mins
+pc <- proc.time()
+data_uploaded <- sapply(sql_upload_data, function(sql_st) {
   tryCatch({
     RJDBC::dbSendUpdate(db_conn, sql_st)
     return("OK")
   }, error = function(e)
     return(paste0("FAILED: ", e)))
-  })
+})
+proc.time() - pc
 
-# Results
-data_uploaded
+# Results of upload
+stopifnot(all(data_uploaded == "OK"))
 
-
-# Upload 2011/12 APC data -------------------------------------------------
-
-# Read data into R
-HES_APC_1112_data <- fread("data-raw/HSCIC HES data/Extract_Sheffield_APC_1112.txt", sep = "|", header = TRUE, colClasses = "character")
-
-# Drop HSCIC's additional fields
-HES_APC_1112_data[, c("adm_cfl", "dis_cfl") := NULL]
-
-# Write out editted file (faster than using dbWriteTable!)
-write.csv(HES_APC_1112_data, file = "data-raw/HSCIC HES data/Extract_Sheffield_APC_1112_editted.csv", row.names = FALSE)
-
-# Free up memeory
-rm(HES_APC_1112_data)
-gc()
-
-# Upload
-data_uploaded <- tryCatch({
-  RJDBC::dbSendUpdate(db_conn, paste0("COPY public.hes_apc_0714_raw FROM '", getwd(), "/data-raw/HSCIC HES data/Extract_Sheffield_APC_1112_editted.csv' (FORMAT CSV, HEADER TRUE)"))
-  TRUE
-}, error = function(e)
-  return(paste0("FAILED: ", e)))
-data_uploaded
-
-
-# Tidy up database table --------------------------------------------------
-
-# Add unique constraint on "epikey" field
+# Add unique constraint on "epikey" field, ~ 30s
 APC_epikey_unique <- tryCatch({
-  RJDBC::dbSendUpdate(db_conn, "ALTER TABLE public.hes_apc_0714_raw ADD UNIQUE (epikey)")
+  RJDBC::dbSendUpdate(db_conn, paste0("ALTER TABLE public.", tbl_name, " ADD UNIQUE (epikey);"))
   TRUE
 }, error = function(e)
   return(FALSE))
 stopifnot(APC_epikey_unique == TRUE)
 
 # Total rows in table
-RJDBC::dbGetQuery(db_conn, "SELECT COUNT(*) FROM public.hes_apc_0714_raw")
+row_cont <- unlist(RJDBC::dbGetQuery(db_conn, paste0("SELECT COUNT(*) FROM public.", tbl_name)))
+stopifnot(row_cont == 5513241)
