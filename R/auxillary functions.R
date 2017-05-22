@@ -168,3 +168,181 @@ classifyUCCs <- function(data_in) {
 
   return(data)
 }
+
+
+searchLong <- function(data, idvars, chars = NA, needles) {
+  dt <- copy(data)
+
+  dt_long <- data.table::melt(dt, id.vars = idvars, variable.factor = FALSE)
+
+  if(!missing(chars)) dt_long[, value := substr(value, 1, chars)]
+  dt_long <- unique(dt_long[value %in% needles, (idvars), with = FALSE])
+
+  return(dt_long)
+}
+
+classifyACSC3.1 <- function(data_in) {
+  # CCG Outcome Indicator Set, Indicator 3.1
+  # Method as per https://indicators.hscic.gov.uk/download/Clinical%20Commissioning%20Group%20Indicators/Specification/CCG_3.1_I00759_S.pdf
+
+  # Take a copy (becuase of doing all this by ref)
+  data <- copy(data_in)
+
+  data[, ':=' (diag_01_3char = substr(apc_diag_01, 1, 3),
+                        diag_01_4char = substr(apc_diag_01, 1, 4))]
+
+  # More data is reqd for conditions identified in subsets a, b, and f
+
+  acsc_additional_data_ids <- data[diag_01_3char %in% c("A36", "A37", "B05", "B06", "B26", "J10", "J11", "J14") | # (a)
+                             diag_01_4char %in% c("B161", "B169", "J13X", "J153", "J154", "J157", "J159", "J168", "J181", "J188", "M014") | # (a)
+                             diag_01_4char %in% paste0("I24", c(0, 8, 9)) | # (b)
+                             diag_01_3char %in% c(paste0("L0", 1:4), "L88)") | # (f)
+                             diag_01_4char %in% c("I891", "L980", paste0("L08", c(0, 8, 9))), # (f)
+                           .(encrypted_hesid, apc_cips, diag_01_4char, diag_01_3char)]
+
+  db_conn <- connect2DB()
+
+  stopifnot(DBI::dbWriteTable(db_conn, "temp_apc_ids", acsc_additional_data_ids[, .(encrypted_hesid, apc_cips)], temporary = TRUE) == TRUE)
+
+  apc_acsc_additional_fields <- c("encrypted_hesid",
+                             "cips",
+                             paste0("diag_" , c(paste0("0", 1:9), 10:20)),
+                             paste0("opertn_" , c(paste0("0", 1:9), 10:24)))
+
+  sql_get_apc_acsc_additional_data <- paste("SELECT",
+                                       paste0(apc_acsc_additional_fields, collapse = ", "),
+                                       "FROM (",
+                                       "SELECT admiepis.epikey, admiepis.cips FROM",
+                                       "(SELECT encrypted_hesid, cips, epikey FROM relevant_apc_cips_episode_data WHERE cips_episode = 1) AS admiepis",
+                                       "INNER JOIN temp_apc_ids AS ids ON ",
+                                       "admiepis.encrypted_hesid = ids.encrypted_hesid AND admiepis.cips = ids.apc_cips",
+                                       ") AS link INNER JOIN relevant_apc_episodes AS epidata ON",
+                                       "(link.epikey = epidata.epikey)")
+
+  apc_acsc_additional_data <- getAdHocQueryResults(db_conn, sql_get_apc_acsc_additional_data, 500000)[, present := TRUE]
+
+  RJDBC::dbDisconnect(db_conn)
+  db_conn <- NULL
+
+  apc_acsc_additional_data <- merge(acsc_additional_data_ids, apc_acsc_additional_data, by.x = c("encrypted_hesid", "apc_cips"), by.y = c("encrypted_hesid", "cips"), all.x = TRUE)
+
+  # Check numbers
+#  stopifnot(apc_acsc_additional_data[is.na(present), .N] == 0)
+  apc_acsc_additional_data[, present := NULL]
+
+  subset_a_exclusions <- searchLong(apc_acsc_additional_data[diag_01_3char %in% c("A36", "A37", "B05", "B06", "B26", "J10", "J11", "J14") |
+                               diag_01_4char %in% c("B161", "B169", "J13X", "J153", "J154", "J157", "J159", "J168", "J181", "J188", "M014"),
+                             (c("encrypted_hesid", "apc_cips", paste0("diag_", c(paste0(0, 1:9), 10:20)))), with = FALSE],
+                    c("encrypted_hesid", "apc_cips"),
+                    3,
+                    "D57")
+
+  subset_b.1_exclusions <- searchLong(apc_acsc_additional_data[diag_01_4char %in% paste0("I24", c(0, 8, 9)),
+                                    (c("encrypted_hesid", "apc_cips", paste0("opertn_", c(paste0(0, 1:9), 10:20)))), with = FALSE],
+                     c("encrypted_hesid", "apc_cips"),
+                     1,
+                     LETTERS[c(1:20, 22:23)])
+
+  subset_b.2_exclusions <- searchLong(apc_acsc_additional_data[diag_01_4char %in% paste0("I24", c(0, 8, 9)),
+                                    (c("encrypted_hesid", "apc_cips", paste0("opertn_", c(paste0(0, 1:9), 10:20)))), with = FALSE],
+                     c("encrypted_hesid", "apc_cips"),
+                     2,
+                     paste0("X", c(0:2, 4:5)))
+
+  subset_f.1_exclusions <- searchLong(apc_acsc_additional_data[diag_01_3char %in% c(paste0("L0", 1:4), "L88)") | # (f)
+                                diag_01_4char %in% c("I891", "L980", paste0("L08", c(0, 8, 9))), (c("encrypted_hesid", "apc_cips", paste0("opertn_", c(paste0(0, 1:9), 10:20)))), with = FALSE],
+                     c("encrypted_hesid", "apc_cips"),
+                     1,
+                     LETTERS[c(1:18, 20, 22:23)])
+
+  subset_f.2_exclusions <- searchLong(apc_acsc_additional_data[diag_01_3char %in% c(paste0("L0", 1:4), "L88)") | # (f)
+                                diag_01_4char %in% c("I891", "L980", paste0("L08", c(0, 8, 9))), (c("encrypted_hesid", "apc_cips", paste0("opertn_", c(paste0(0, 1:9), 10:20)))), with = FALSE],
+                     c("encrypted_hesid", "apc_cips"),
+                     2,
+                     c(paste0("S", 1:3), paste0("X", c(0:2, 4:5))))
+
+  subset_f.3_exclusions <- searchLong(apc_acsc_additional_data[diag_01_3char %in% c(paste0("L0", 1:4), "L88)") | # (f)
+                                diag_01_4char %in% c("I891", "L980", paste0("L08", c(0, 8, 9))), (c("encrypted_hesid", "apc_cips", paste0("opertn_", c(paste0(0, 1:9), 10:20)))), with = FALSE],
+                     c("encrypted_hesid", "apc_cips"),
+                     3,
+                     paste0("S", c(41:45, 48:49)))
+
+  # merge in exclusion data
+  acsc_additional_data_exclusion_ids <- unique(rbind(subset_a_exclusions,
+                                              subset_b.1_exclusions,
+                                              subset_b.2_exclusions,
+                                              subset_f.1_exclusions,
+                                              subset_f.2_exclusions,
+                                              subset_f.3_exclusions))[, exclude := TRUE]
+
+  # now find all cips with an ACSC (based on primary diag code only)
+  acsc_identified_conditions <- data[(diag_01_3char %in% c("A36", "A37", "B05", "B06", "B26", "J10", "J11", "J14") | # (a)
+                                        diag_01_4char %in% c("B161", "B169", "J13X", "J153", "J154", "J157", "J159", "J168", "J181", "J188", "M014") | # (a)
+                                        diag_01_4char %in% paste0("I24", c(0, 8, 9)) | # (b)
+                                        diag_01_3char %in% c("A04", "A08", "A09", "E86", "K52") | # (c)
+                                        diag_01_4char %in% c("A020", "A059", "A072") | # (c)
+                                        diag_01_3char %in% paste0("N", 10:12) | # (d)
+                                        diag_01_4char %in% c("N136", "N159", "N300", "N308", "N309", "N390") | # (d)
+                                        diag_01_3char %in% paste0("K", 20:21) | # (e)
+                                        diag_01_4char %in% paste0("K", rep(25:28, each = 6), c(0:2, 4:6)) | # (e)
+                                        diag_01_3char %in% c(paste0("L0", 1:4), "L88)") | # (f)
+                                        diag_01_4char %in% c("I891", "L980", paste0("L08", c(0, 8, 9))) | # (f)
+                                        diag_01_3char %in% c(paste0("H", 66:67), paste0("J0", c(2:3, 6))) | # (g)
+                                        diag_01_4char %in% c("J312", "J040") | # (g)
+                                        diag_01_3char %in% paste0("K", c(paste0(0, c(2:6, 8)), as.character(12:13))) | # (h)
+                                        diag_01_4char %in% c("A690", "K098", "K099") | # (h)
+                                        diag_01_3char %in% c("O15", "R56") | # (i)
+                                        diag_01_4char == "G253"), # (i)
+                                     .(encrypted_hesid, apc_cips, diag_01_3char, diag_01_4char)]
+
+  # exclude relevent cips from subgroups a, b, and f
+  acsc_identified_conditions <- merge(acsc_identified_conditions, acsc_additional_data_exclusion_ids, by = c("encrypted_hesid", "apc_cips"), all.x = TRUE)[is.na(exclude)][, exclude := NULL]
+
+  # categorise ACSC cips (mutually exclusive groups)
+  acsc_identified_conditions[diag_01_3char %in% paste0("J", c(10:11, 14)) |
+                               diag_01_4char %in% c("J13X", paste0("J15", c(3:4, 7, 9)), "J168", "J181", "J188"),
+                             acsc3.1_condition := "influenza, pneumonia"]
+
+  acsc_identified_conditions[diag_01_3char %in% c("A36", "A37", "B05", "B06", "B26") |
+                               diag_01_4char %in% c("B161", "B169", "M014"),
+                             acsc3.1_condition := "other vaccine preventable"]
+
+  acsc_identified_conditions[diag_01_4char %in% paste0("I24", c(0, 8:9)),
+                             acsc3.1_condition := "angina"]
+
+  acsc_identified_conditions[diag_01_3char %in% c("E86", "K52", "A04", "A08", "A09") |
+                               diag_01_4char %in% c("A020", "A059", "A072"),
+                             acsc3.1_condition := "dehydration and gastroenteritis"]
+
+  acsc_identified_conditions[diag_01_3char %in% paste0("N", 10:12) |
+                               diag_01_4char %in% c("N136", "N159", "N390", "N300", "N308", "N309"),
+                             acsc3.1_condition := "pyelonephritis and kidney/urinary tract infections"]
+
+  acsc_identified_conditions[diag_01_3char %in% paste0("K", 20:21) |
+                               diag_01_4char %in% paste0("K", rep(25:28, each = 6), c(0:2, 4:6)),
+                             acsc3.1_condition := "perforated/bleeding ulcer"]
+
+  acsc_identified_conditions[diag_01_3char %in% paste0("L", c(paste0(0, 1:4), "88")) |
+                               diag_01_4char %in% c(paste0("L08", c(0, 8:9)), "L980", "I891"),
+                             acsc3.1_condition := "cellulitis"]
+
+  acsc_identified_conditions[diag_01_3char %in% c(paste0("H", 66:67), paste0("J0", c(2:3, 6))) |
+                               diag_01_4char %in% c("J040", "J312"),
+                             acsc3.1_condition := "ear, nose and throat infections"]
+
+  acsc_identified_conditions[diag_01_3char %in% paste0("K", c(paste0(0, c(2:6, 8)), 12:13)) |
+                               diag_01_4char %in% c("A690", paste0("K09", 8:9)),
+                             acsc3.1_condition := "dental conditions"]
+
+  acsc_identified_conditions[diag_01_3char %in% c("R56", "O15") |
+                               diag_01_4char == "G253",
+                             acsc3.1_condition := "convulsions and epilepsy"]
+
+  acsc_identified_conditions[is.na(acsc3.1_condition), acsc3.1_condition := "unclassified acsc3.1 condition"]
+
+  data[, c("diag_01_3char", "diag_01_4char") := NULL]
+
+  data <- merge(data, acsc_identified_conditions[, .(encrypted_hesid, apc_cips, acsc3.1_condition)], by = c("encrypted_hesid", "apc_cips"), all.x = TRUE)
+
+  return(data)
+}

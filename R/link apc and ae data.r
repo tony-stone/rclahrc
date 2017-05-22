@@ -15,9 +15,9 @@
 # ans <- ans[time_diff_hours >= 0 & time_diff_hours < 48]
 
 # reqd
-# library(data.table)
-# source("r/auxillary functions.R")
-# source("r/database functions.R")
+library(data.table)
+source("r/auxillary functions.R")
+source("r/database functions.R")
 
 linkAEandAPCdata <- function() {
 
@@ -71,15 +71,19 @@ linkAEandAPCdata <- function() {
                        paste0(apc_fields, " AS apc_", apc_fields, collapse = ", "),
                        "FROM relevant_apc_cips_data WHERE emergency_admission = TRUE")
 
+  db_conn <- connect2DB()
   # ~10 mins
 #  pc <- proc.time()
-  ae_data <- getAdHocQueryResults(sql_get_ae, 50000)
+  ae_data <- getAdHocQueryResults(db_conn, sql_get_ae, 50000)
 #  proc.time() - pc
 
   # ~3 mins
 #  pc <- proc.time()
-  apc_data <- getAdHocQueryResults(sql_get_apc, 50000)
+  apc_data <- getAdHocQueryResults(db_conn, sql_get_apc, 50000)
 #  proc.time() - pc
+
+  RJDBC::dbDisconnect(db_conn)
+  db_conn <- NULL
 
   ae_data[, ':=' (ae_arrivaldate = as.Date(lubridate::fast_strptime(ae_arrivaldate, format = "%Y-%m-%d", lt = FALSE)),
                   ae_arrivaltime = lubridate::fast_strptime(paste(ae_arrivaldate, ae_arrivaltime), format = "%Y-%m-%d %H:%M:%S", lt = FALSE))]
@@ -154,6 +158,15 @@ linkAEandAPCdata <- function() {
   stopifnot(ae_apc_data[!is.na(apc_cips), .N, by = .(encrypted_hesid, apc_cips)][N > 1, .N] == 0 & ae_apc_data[!is.na(ae_aekey), .N, by = .(encrypted_hesid, ae_aekey)][N > 1, .N] == 0)
 
   # save - SLOW!!
+  #saveRDS(ae_apc_data, file = createDataFilename("linked hes ae and apc data"), compress = "xz")
+
+  # ~3.5mins
+  ae_apc_data <- readRDS("output-data/linked hes ae and apc data - 2017-05-17 14.30.Rds")
+
+  # ~4.5mins
+  ae_apc_data <- classifyACSC3.1(ae_apc_data)
+
+  # save - SLOW!! ~50mins
   saveRDS(ae_apc_data, file = createDataFilename("linked hes ae and apc data"), compress = "xz")
 
   return(TRUE)

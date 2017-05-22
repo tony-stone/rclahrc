@@ -104,11 +104,9 @@ getQueryResults <- function(table, fields, logic = NA, group.over = NA, limit = 
 }
 
 
-getAdHocQueryResults <- function(sql_query, limit = 500000) {
+getAdHocQueryResults <- function(db_conn, sql_query, limit = 500000) {
 
   sql <- paste("CREATE TEMP TABLE temp_rs_adhoc AS SELECT row_number() OVER () AS row, st.* FROM (", sql_query, ") AS st;")
-
-  db_conn <- connect2DB()
 
   # Fairly quick, depends on table indexing, etc.
   resource <- RJDBC::dbSendUpdate(db_conn, sql)
@@ -125,9 +123,6 @@ getAdHocQueryResults <- function(sql_query, limit = 500000) {
     gc()
     return(rs)
   }, conn = db_conn)
-
-  RJDBC::dbDisconnect(db_conn)
-  db_conn <- NULL
 
   data <- data.table::rbindlist(result_sets)
   data[, row := NULL]
