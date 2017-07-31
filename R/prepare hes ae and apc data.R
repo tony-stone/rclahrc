@@ -1,5 +1,5 @@
 # Creates new DB table to store only relevant HES AE records based on supplied LSOAs, aeattendcat, aedepttype
-prepare_relevant_attendances <- function(lsoas) {
+prepare_relevant_attendances <- function() {
   db_conn <- connect2DB()
 
   tbl_name <- "relevant_ae_attendances"
@@ -14,15 +14,15 @@ prepare_relevant_attendances <- function(lsoas) {
                                 "aedepttype, aeincloctype, aepatgroup, aerefsource,",
                                 "CASE WHEN raw.sex = 'NULL' THEN NULL ELSE raw.sex::integer END AS sex,",
                                 "CASE WHEN raw.arrivalage = 'NULL' THEN NULL WHEN raw.arrivalage IN (", paste0("'", 7001:7007, "'", collapse = ", "), ") THEN 0 ELSE raw.arrivalage::integer END AS arrivalage,",
-                                "CASE WHEN raw.arrivaldate IS NULL OR raw.arrivaldate IN ('NULL', '1800-01-01', '1801-01-01', '1582-10-15', '1600-01-01') THEN NULL ELSE to_date(raw.arrivaldate, 'YYYY-MM-DD') END AS arrivaldate,",
-                                "CASE WHEN substring(raw.arrivaltime FROM 1 FOR 2) NOT IN (", paste0("'", c(paste0(0, 0:9), as.character(10:23)), "'", collapse = ", "), ") OR substring(raw.arrivaltime FROM 3 FOR 1) NOT IN (", paste0("'", 0:5, "'", collapse = ", "), ") THEN NULL ELSE (raw.arrivaltime || '00')::time END AS arrivaltime,",
-                                "CASE WHEN substring(raw.inittime FROM 1 FOR 2) NOT IN (", paste0("'", c(paste0(0, 0:9), as.character(10:23)), "'", collapse = ", "), ") OR substring(raw.inittime FROM 3 FOR 1) NOT IN (", paste0("'", 0:5, "'", collapse = ", "), ") THEN NULL ELSE (raw.inittime || '00')::time END AS inittime,",
-                                "CASE WHEN substring(raw.trettime FROM 1 FOR 2) NOT IN (", paste0("'", c(paste0(0, 0:9), as.character(10:23)), "'", collapse = ", "), ") OR substring(raw.trettime FROM 3 FOR 1) NOT IN (", paste0("'", 0:5, "'", collapse = ", "), ") THEN NULL ELSE (raw.trettime || '00')::time END AS trettime,",
-                                "CASE WHEN substring(raw.concltime FROM 1 FOR 2) NOT IN (", paste0("'", c(paste0(0, 0:9), as.character(10:23)), "'", collapse = ", "), ") OR substring(raw.concltime FROM 3 FOR 1) NOT IN (", paste0("'", 0:5, "'", collapse = ", "), ") THEN NULL ELSE (raw.concltime || '00')::time END AS concltime,",
-                                "CASE WHEN substring(raw.deptime FROM 1 FOR 2) NOT IN (", paste0("'", c(paste0(0, 0:9), as.character(10:23)), "'", collapse = ", "), ") OR substring(raw.deptime FROM 3 FOR 1) NOT IN (", paste0("'", 0:5, "'", collapse = ", "), ") THEN NULL ELSE (raw.deptime || '00')::time END AS deptime,",
-                                paste0("diag_" , c(paste0("0", 1:9), 10:12), ", ", collapse = ""),
-                                paste0("invest_" , c(paste0("0", 1:9), 10:12), ", ", collapse = ""),
-                                paste0("treat_" , c(paste0("0", 1:9), 10:12), ", ", collapse = ""),
+                                "CASE WHEN raw.arrivaldate IS NULL OR raw.arrivaldate IN ('NULL', '1800-01-01', '1801-01-01', '1582-10-15', '1600-01-01') THEN NULL ELSE raw.arrivaldate END AS arrivaldate,",
+                                "CASE WHEN substring(raw.arrivaltime FROM 1 FOR 2) NOT IN (", paste0("'", c(paste0(0, 0:9), as.character(10:23)), "'", collapse = ", "), ") OR substring(raw.arrivaltime FROM 3 FOR 1) NOT IN (", paste0("'", 0:5, "'", collapse = ", "), ") THEN NULL ELSE raw.arrivaltime END AS arrivaltime,",
+                                "CASE WHEN substring(raw.inittime FROM 1 FOR 2) NOT IN (", paste0("'", c(paste0(0, 0:9), as.character(10:23)), "'", collapse = ", "), ") OR substring(raw.inittime FROM 3 FOR 1) NOT IN (", paste0("'", 0:5, "'", collapse = ", "), ") THEN NULL ELSE raw.inittime END AS inittime,",
+                                "CASE WHEN substring(raw.trettime FROM 1 FOR 2) NOT IN (", paste0("'", c(paste0(0, 0:9), as.character(10:23)), "'", collapse = ", "), ") OR substring(raw.trettime FROM 3 FOR 1) NOT IN (", paste0("'", 0:5, "'", collapse = ", "), ") THEN NULL ELSE raw.trettime END AS trettime,",
+                                "CASE WHEN substring(raw.concltime FROM 1 FOR 2) NOT IN (", paste0("'", c(paste0(0, 0:9), as.character(10:23)), "'", collapse = ", "), ") OR substring(raw.concltime FROM 3 FOR 1) NOT IN (", paste0("'", 0:5, "'", collapse = ", "), ") THEN NULL ELSE raw.concltime END AS concltime,",
+                                "CASE WHEN substring(raw.deptime FROM 1 FOR 2) NOT IN (", paste0("'", c(paste0(0, 0:9), as.character(10:23)), "'", collapse = ", "), ") OR substring(raw.deptime FROM 3 FOR 1) NOT IN (", paste0("'", 0:5, "'", collapse = ", "), ") THEN NULL ELSE raw.deptime END AS deptime,",
+                                paste0("diag_" , c(paste0(0, 1:9), 10:12), ", ", collapse = ""),
+                                paste0("invest_" , c(paste0(0, 1:9), 10:12), ", ", collapse = ""),
+                                paste0("treat_" , c(paste0(0, 1:9), 10:12), ", ", collapse = ""),
                                 "lsoa01,",
                                 "sushrg,",
                                 "sushrgvers,",
@@ -58,7 +58,7 @@ prepare_relevant_attendances <- function(lsoas) {
 }
 
 
-# Creates new DB table to store relevant HES APC episodes together with details about the CIPS to which they belong
+# Creates new DB table to store relevant HES APC episodes data
 save_relevant_admitted_care_episodes <- function() {
 
   db_conn <- connect2DB()
@@ -71,27 +71,26 @@ save_relevant_admitted_care_episodes <- function() {
   # Prepare query string to create table
   sql_query_make_table <- paste("CREATE TABLE", tbl_name, "AS",
     "SELECT DISTINCT ON (encrypted_hesid, procode3, diag_01, diag_02, cause, admidate, disdate, epistart, epiend, epiorder, admimeth, admisorc, dismeth, tretspef)",
-    "encrypted_hesid, tretspef, procode3, sitetret, epikey, lsoa01,",
+    "encrypted_hesid, tretspef, procode3, sitetret, epikey, lsoa01, operstat, posopdur, preopdur, classpat, sushrg, mentcat, mainspef, intmanig, domproc, carersi, admistat,",
     "CASE WHEN raw.startage = 'NULL' THEN NULL WHEN raw.startage IN (", paste0("'", 7001:7007, "'", collapse = ", "), ") THEN 0 ELSE raw.startage::integer END AS startage,",
     "CASE WHEN raw.endage = 'NULL' THEN NULL WHEN raw.endage IN (", paste0("'", 7001:7007, "'", collapse = ", "), ") THEN 0 ELSE raw.endage::integer END AS endage,",
     "CASE WHEN raw.sex <> '1' AND raw.sex <> '2' THEN NULL ELSE raw.sex END AS sex,",
-    "CASE WHEN raw.elecdate IS NULL OR raw.elecdate IN ('NULL', '1800-01-01', '1801-01-01') THEN NULL ELSE to_date(raw.elecdate, 'YYYY-MM-DD') END AS elecdate,",
-    "CASE WHEN raw.admidate IS NULL OR raw.admidate IN ('NULL', '1800-01-01', '1801-01-01') THEN NULL ELSE to_date(raw.admidate, 'YYYY-MM-DD') END AS admidate,",
-    "CASE WHEN raw.epistart IN ('NULL', '1800-01-01', '1801-01-01') THEN NULL ELSE to_date(raw.epistart, 'YYYY-MM-DD') END AS epistart,",
-    "CASE WHEN raw.epiend IN ('NULL', '1800-01-01', '1801-01-01') THEN NULL ELSE to_date(raw.epiend, 'YYYY-MM-DD') END AS epiend,",
-    "CASE WHEN raw.disreadydate IN ('NULL', '1800-01-01', '1801-01-01') THEN NULL ELSE to_date(raw.disreadydate, 'YYYY-MM-DD') END AS disreadydate,",
-    "CASE WHEN raw.disdate IN ('NULL', '1800-01-01', '1801-01-01') THEN NULL ELSE to_date(raw.disdate, 'YYYY-MM-DD') END AS disdate,",
+    "CASE WHEN raw.elecdate IS NULL OR raw.elecdate IN ('NULL', '1800-01-01', '1801-01-01') THEN NULL ELSE raw.elecdate END AS elecdate,",
+    "CASE WHEN raw.admidate IS NULL OR raw.admidate IN ('NULL', '1800-01-01', '1801-01-01') THEN NULL ELSE raw.admidate END AS admidate,",
+    "CASE WHEN raw.epistart IN ('NULL', '1800-01-01', '1801-01-01') THEN NULL ELSE raw.epistart END AS epistart,",
+    "CASE WHEN raw.epiend IN ('NULL', '1800-01-01', '1801-01-01') THEN NULL ELSE raw.epiend END AS epiend,",
+    "CASE WHEN raw.disreadydate IN ('NULL', '1800-01-01', '1801-01-01') THEN NULL ELSE raw.disreadydate END AS disreadydate,",
+    "CASE WHEN raw.disdate IN ('NULL', '1800-01-01', '1801-01-01') THEN NULL ELSE raw.disdate END AS disdate,",
     "CASE WHEN raw.epiorder = '98' OR raw.epiorder = '99' THEN NULL ELSE raw.epiorder::integer END AS epiorder,",
     "CASE WHEN raw.admisorc = '98' OR raw.admisorc = '99' THEN NULL ELSE raw.admisorc END AS admisorc,",
     "CASE WHEN raw.disdest = 'NULL' OR raw.disdest = '98' OR raw.disdest = '99' THEN NULL ELSE raw.disdest END AS disdest,",
     "CASE WHEN raw.admimeth = '98' OR raw.admimeth = '99' THEN NULL ELSE raw.admimeth END AS admimeth,",
     "CASE WHEN raw.dismeth = ' ' OR raw.dismeth = '8' OR raw.dismeth = '9' THEN NULL ELSE raw.dismeth END AS dismeth,",
     "CASE WHEN raw.diag_01 IS NULL OR raw.diag_01 = 'NULL' THEN 'R69X6' ELSE raw.diag_01 END AS diag_01,",
-    paste0("CASE WHEN raw.diag_", c(paste0(0, 2:9), 10:20), " = 'NULL' THEN NULL ELSE raw.diag_", c(paste0("0", 2:9), 10:20), " END AS diag_", c(paste0("0", 2:9), 10:20), ",", collapse = " "),
-    paste0("CASE WHEN raw.opertn_", c(paste0(0, 1:9), 10:24), " = 'NULL' THEN NULL ELSE raw.opertn_", c(paste0("0", 1:9), 10:24), " END AS opertn_", c(paste0("0", 1:9), 10:24), ",", collapse = " "),
+    paste0("CASE WHEN raw.diag_", c(paste0(0, 2:9), 10:20), " = 'NULL' THEN NULL ELSE raw.diag_", c(paste0(0, 2:9), 10:20), " END AS diag_", c(paste0(0, 2:9), 10:20), ",", collapse = " "),
+    paste0("CASE WHEN raw.opertn_", c(paste0(0, 1:9), 10:24), " = 'NULL' THEN NULL ELSE raw.opertn_", c(paste0(0, 1:9), 10:24), " END AS opertn_", c(paste0(0, 1:9), 10:24), ",", collapse = " "),
+    paste0("CASE WHEN raw.opdate_", c(paste0(0, 1:9), 10:24), " IN ('NULL', '1800-01-01', '1801-01-01') THEN NULL ELSE raw.opdate_", c(paste0(0, 1:9), 10:24), " END AS opdate_", c(paste0(0, 1:9), 10:24), ",", collapse = " "),
     "CASE WHEN raw.cause = 'NULL' THEN NULL ELSE raw.cause END AS cause,",
-    "CASE WHEN raw.sushrg = 'NULL' THEN NULL ELSE raw.sushrg END AS sushrg,",
-    "CASE WHEN raw.mentcat = 'NULL' THEN NULL ELSE raw.mentcat END AS mentcat,",
     "CASE WHEN raw.admidate IS NULL OR raw.admidate = 'NULL' OR raw.admidate = '1800-01-01' THEN 1 WHEN raw.admidate = '1801-01-01' THEN 2 ELSE 0 END AS admidate_validity,",
     "CASE WHEN raw.epistart IS NULL OR raw.epistart = 'NULL' OR raw.epistart = '1800-01-01' THEN 1 WHEN raw.epistart = '1801-01-01' THEN 2 ELSE 0 END AS epistart_validity,",
     "CASE WHEN raw.epiend IS NULL OR raw.epiend = 'NULL' OR raw.epiend = '1800-01-01' THEN 1 WHEN raw.epiend = '1801-01-01' THEN 2 ELSE 0 END AS epiend_validity,",
@@ -125,7 +124,7 @@ save_relevant_admitted_care_episodes <- function() {
 }
 
 
-# Creates new DB table to store only relevant HES APC spells
+# Creates new DB table to store HES APC spells
 save_relevant_admitted_care_spells <- function() {
 
   db_conn <- connect2DB()
@@ -200,7 +199,7 @@ save_relevant_admitted_care_spells <- function() {
 }
 
 
-
+# Creates new DB table to store HES APC CIPSs
 save_relevant_admitted_care_cips <- function() {
 
   db_conn <- connect2DB()
@@ -213,12 +212,12 @@ save_relevant_admitted_care_cips <- function() {
   sql_query_make_table <- paste("CREATE TEMP TABLE temp_spell_cipsing AS",
     "SELECT row_number() OVER (PARTITION BY encrypted_hesid ORDER BY spellstart ASC, spell ASC) AS cips, foo.* FROM (",
     "SELECT spells.*, spell_earliest_trans.transferedin, spell_latest_trans.transferedout FROM ",
-    "(SELECT spell_id.encrypted_hesid, spell_id.spell, MIN(episodes.epistart) AS spellstart, MAX(episodes.epiend) AS spellend FROM relevant_apc_spells_linktable AS spell_id INNER JOIN relevant_apc_episodes AS episodes ON spell_id.epikey = episodes.epikey GROUP BY spell_id.encrypted_hesid, spell_id.spell) AS spells",
+    "(SELECT spell_id.encrypted_hesid, spell_id.spell, to_date(MIN(episodes.epistart), 'YYYY-MM-DD') AS spellstart, to_date(MAX(episodes.epiend), 'YYYY-MM-DD') AS spellend FROM relevant_apc_spells_linktable AS spell_id INNER JOIN relevant_apc_episodes AS episodes ON spell_id.epikey = episodes.epikey GROUP BY spell_id.encrypted_hesid, spell_id.spell) AS spells",
     "LEFT JOIN",
-    "(SELECT spell_id.encrypted_hesid, spell_id.spell, MIN(episodes.epistart) AS transferedin FROM relevant_apc_spells_linktable AS spell_id INNER JOIN relevant_apc_episodes AS episodes ON spell_id.epikey = episodes.epikey WHERE episodes.admimeth = '81' OR episodes.admisorc IN ('51', '52', '53') GROUP BY spell_id.encrypted_hesid, spell_id.spell) AS spell_earliest_trans",
+    "(SELECT spell_id.encrypted_hesid, spell_id.spell, to_date(MIN(episodes.epistart), 'YYYY-MM-DD') AS transferedin FROM relevant_apc_spells_linktable AS spell_id INNER JOIN relevant_apc_episodes AS episodes ON spell_id.epikey = episodes.epikey WHERE episodes.admimeth = '81' OR episodes.admisorc IN ('51', '52', '53') GROUP BY spell_id.encrypted_hesid, spell_id.spell) AS spell_earliest_trans",
     "ON spells.encrypted_hesid = spell_earliest_trans.encrypted_hesid AND spells.spell = spell_earliest_trans.spell",
     "LEFT JOIN",
-    "(SELECT spell_id.encrypted_hesid, spell_id.spell, MAX(episodes.epiend) AS transferedout FROM relevant_apc_spells_linktable AS spell_id INNER JOIN relevant_apc_episodes AS episodes ON spell_id.epikey = episodes.epikey WHERE episodes.disdest IN ('51', '52', '53') GROUP BY spell_id.encrypted_hesid, spell_id.spell) AS spell_latest_trans",
+    "(SELECT spell_id.encrypted_hesid, spell_id.spell, to_date(MAX(episodes.epiend), 'YYYY-MM-DD') AS transferedout FROM relevant_apc_spells_linktable AS spell_id INNER JOIN relevant_apc_episodes AS episodes ON spell_id.epikey = episodes.epikey WHERE episodes.disdest IN ('51', '52', '53') GROUP BY spell_id.encrypted_hesid, spell_id.spell) AS spell_latest_trans",
     "ON spells.encrypted_hesid = spell_latest_trans.encrypted_hesid AND spells.spell = spell_latest_trans.spell) AS foo;")
 
   # Takes about 5mins
@@ -298,7 +297,7 @@ save_relevant_admitted_care_cips <- function() {
 }
 
 
-
+# Creates new DB table combining episode level data from episodes within the same CIPS
 save_relevant_cips_data <- function() {
 
   db_conn <- connect2DB()
@@ -312,11 +311,33 @@ save_relevant_cips_data <- function() {
     "SELECT cipss.*,",
     "CASE WHEN cipss.male_episodes > cipss.female_episodes THEN 1 WHEN cipss.male_episodes < cipss.female_episodes THEN 2 ELSE NULL END AS sex,",
     "discharged.last_disdate, died.date_of_death_first, died.date_of_death_last,",
-    "admiepi.diag_01, admiepi.diag_02, admiepi.cause, admiepi.startage, admiepi.admimeth, admiepi.lsoa01, admiepi.sitetret, admiepi.elecdate, admiepi.sushrg,",
-    "lastepi.endage,",
+    paste0("admiepi.", c(paste0("diag_", c(paste0(0, 1:9), 10:20)),
+                         paste0("opertn_", c(paste0(0, 1:9), 10:24)),
+                         paste0("opdate_", c(paste0(0, 1:9), 10:24)),
+                         "cause",
+                         "startage",
+                         "admisorc",
+                         "admimeth",
+                         "lsoa01",
+                         "operstat",
+                         "posopdur",
+                         "preopdur",
+                         "classpat",
+                         "mentcat",
+                         "mainspef",
+                         "tretspef",
+                         "intmanig",
+                         "domproc",
+                         "carersi",
+                         "admistat",
+                         "sitetret",
+                         "elecdate",
+                         "sushrg")
+           , collapse = ", "), ",",
+    "lastepi.endage, lastepi.disdest, lastepi.dismeth, lastepi.disreadydate,",
     "CASE WHEN discharged.last_disdate >= cipss.cips_end THEN TRUE ELSE FALSE END AS cips_finished,",
     "CASE WHEN died.date_of_death_first IS NOT NULL THEN TRUE ELSE FALSE END AS died,",
-    "(cipss.cips_end - cipss.cips_start) AS nights_admitted,",
+    "(to_date(cipss.cips_end, 'YYYY-MM-DD') - to_date(cipss.cips_start, 'YYYY-MM-DD')) AS nights_admitted,",
     "CASE WHEN admiepi.admimeth IN (", paste0("'", c(as.character(c(21:25, 28)), paste0(2, LETTERS[1:4])), "'", collapse = ", "), ") THEN TRUE ELSE FALSE END AS emergency_admission,",
     "CASE WHEN notadmiepi.transferedin = '1' THEN TRUE ELSE FALSE END AS any_transfer",
     "FROM",
@@ -335,13 +356,13 @@ save_relevant_cips_data <- function() {
     "(SELECT encrypted_hesid, cips, MIN(disdate) AS date_of_death_first, MAX(disdate) AS date_of_death_last FROM relevant_apc_cips_episode_data WHERE dismeth = '4' OR disdest = '79' GROUP BY encrypted_hesid, cips) AS died",
     "ON (cipss.encrypted_hesid = died.encrypted_hesid AND cipss.cips = died.cips)",
     "LEFT JOIN",
-    "(SELECT encrypted_hesid, cips, diag_01, diag_02, cause, startage, admimeth, lsoa01, sitetret, elecdate, sushrg, cips_episode FROM relevant_apc_cips_episode_data WHERE cips_episode = 1) AS admiepi",
+    "(SELECT * FROM relevant_apc_cips_episode_data WHERE cips_episode = 1) AS admiepi",
     "ON (cipss.encrypted_hesid = admiepi.encrypted_hesid AND cipss.cips = admiepi.cips)",
     "LEFT JOIN",
     "(SELECT encrypted_hesid, cips, MAX(CASE WHEN admisorc = '51' THEN 1 ELSE 0 END) AS transferedin FROM relevant_apc_cips_episode_data WHERE cips_episode != 1 GROUP BY encrypted_hesid, cips) AS notadmiepi",
     "ON (cipss.encrypted_hesid = notadmiepi.encrypted_hesid AND cipss.cips = notadmiepi.cips)",
     "LEFT JOIN",
-    "(SELECT encrypted_hesid, cips, cips_episode, endage FROM relevant_apc_cips_episode_data) AS lastepi",
+    "(SELECT encrypted_hesid, cips, cips_episode, endage, disdest, dismeth, disreadydate FROM relevant_apc_cips_episode_data) AS lastepi",
     "ON (cipss.encrypted_hesid = lastepi.encrypted_hesid AND cipss.cips = lastepi.cips AND cipss.total_episodes = lastepi.cips_episode);")
 
   # Takes few mins
@@ -360,8 +381,11 @@ save_relevant_cips_data <- function() {
   resource <- RJDBC::dbSendUpdate(db_conn, sql_create_index_query)
 
 
-  # Get size of table - 4,730,837 (1,674,954 emergency admissions)
-  nrows <- DBI::dbGetQuery(db_conn, paste0("SELECT COUNT(*) FROM ", tbl_name, ";"))[1, 1]
+  # Get size of table - 4,730,839 (1,674,954 emergency admissions)
+  nrows_all <- DBI::dbGetQuery(db_conn, paste0("SELECT COUNT(*) FROM ", tbl_name, ";"))[1, 1]
+  nrows_ea <- DBI::dbGetQuery(db_conn, paste0("SELECT COUNT(*) FROM ", tbl_name, " WHERE emergency_admission = TRUE;"))[1, 1]
+
+  nrows <- c(all = nrows_all, emergency_admis = nrows_ea)
 
   # Disconnect from DB
   DBI::dbDisconnect(db_conn)
@@ -371,7 +395,7 @@ save_relevant_cips_data <- function() {
 }
 
 
-# Creates new DB table to store only relevant HES APC records based on supplied LSOAs
+# Creates new DB table to store only relevant HES APC CIPSs data
 prepare_relevant_admitted_care <- function() {
 
   n_episodes <- save_relevant_admitted_care_episodes()
